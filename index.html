@@ -133,6 +133,85 @@
     z-index: 5; text-align: center; font-size: 12px; opacity: 0.7;
     pointer-events: none;
   }
+
+  #range-panel {
+    position: fixed;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 8px;
+    background: rgba(20,20,25,0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 18px;
+    pointer-events: auto;
+  }
+  #range-panel .label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    opacity: 0.7;
+  }
+  #range-panel .value {
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    min-width: 48px;
+    text-align: center;
+  }
+  #range-slider-wrap {
+    height: 180px;
+    width: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #range-slider {
+    -webkit-appearance: slider-vertical;
+    appearance: slider-vertical;
+    writing-mode: bt-lr;
+    width: 28px;
+    height: 180px;
+    background: transparent;
+    cursor: pointer;
+  }
+  #range-slider::-webkit-slider-runnable-track {
+    width: 4px;
+    background: rgba(255,255,255,0.18);
+    border-radius: 2px;
+  }
+  #range-slider::-moz-range-track {
+    width: 4px;
+    background: rgba(255,255,255,0.18);
+    border-radius: 2px;
+  }
+  #range-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ff6b6b, #ffa94d);
+    border: 2px solid #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    cursor: pointer;
+  }
+  #range-slider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ff6b6b, #ffa94d);
+    border: 2px solid #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    cursor: pointer;
+  }
   #error-toast {
     position: fixed; top: 50%; left: 16px; right: 16px;
     transform: translateY(-50%);
@@ -202,6 +281,14 @@
   <div class="center-mark"></div>
 </div>
 
+<div id="range-panel">
+  <div class="label">Radius</div>
+  <div class="value" id="range-value">600 m</div>
+  <div id="range-slider-wrap">
+    <input type="range" id="range-slider" min="100" max="3000" step="50" value="600" orient="vertical">
+  </div>
+</div>
+
 <div id="status">Initialisiere…</div>
 <div id="error-toast"></div>
 
@@ -224,6 +311,7 @@ const state = {
   pois: [],
   filter: 'all',
   fovH: 65,             // approx horizontal FOV in degrees
+  radius: 600,          // search radius in meters
   lastFetchKey: null,
 };
 
@@ -321,17 +409,16 @@ function initGeolocation() {
 // ============ POI fetch (Overpass / OpenStreetMap) ============
 async function maybeFetchPOIs() {
   if (state.lat == null) return;
-  // Only refetch if moved > ~150m from last fetch
-  const key = `${state.lat.toFixed(3)},${state.lon.toFixed(3)}`;
+  // Only refetch if moved > ~150m from last fetch or radius changed
+  const key = `${state.lat.toFixed(3)},${state.lon.toFixed(3)},${state.radius}`;
   if (key === state.lastFetchKey) return;
   state.lastFetchKey = key;
   setStatus('Lade Locations…');
 
-  const radius = 600; // meters
   const q = `
     [out:json][timeout:15];
     (
-      node["amenity"~"^(bar|pub|restaurant|cafe|fast_food|biergarten|nightclub|food_court)$"](around:${radius},${state.lat},${state.lon});
+      node["amenity"~"^(bar|pub|restaurant|cafe|fast_food|biergarten|nightclub|food_court)$"](around:${state.radius},${state.lat},${state.lon});
     );
     out body;
   `;
@@ -396,6 +483,26 @@ document.querySelectorAll('.chip[data-filter]').forEach(chip => {
   });
 });
 
+// ============ Range slider ============
+(() => {
+  const slider = $('#range-slider');
+  const valueEl = $('#range-value');
+  const formatRadius = m => m >= 1000 ? `${(m/1000).toFixed(m % 1000 === 0 ? 0 : 1)} km` : `${m} m`;
+  let debounceTimer = null;
+  const onInput = () => {
+    const v = parseInt(slider.value, 10);
+    state.radius = v;
+    valueEl.textContent = formatRadius(v);
+  };
+  const onChange = () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => maybeFetchPOIs(), 250);
+  };
+  slider.addEventListener('input', () => { onInput(); onChange(); });
+  slider.addEventListener('change', onChange);
+  onInput();
+})();
+
 // ============ Render loop ============
 function buildCompass() {
   const ticks = $('#ticks');
@@ -451,12 +558,13 @@ function render() {
     const xPct = 0.5 + (off / state.fovH);
     const x = xPct * window.innerWidth;
     // Vertical: closer = lower on screen, farther = higher (but keep near center)
-    const distFactor = Math.min(1, d / 600); // 0 close -> 1 far
+    const distFactor = Math.min(1, d / state.radius); // 0 close -> 1 far
     const y = window.innerHeight * (0.45 + distFactor * 0.15);
 
     // Scale: closer markers bigger
-    const scale = Math.max(0.6, Math.min(1.2, 1 - (d / 800)));
-    const opacity = Math.max(0.55, 1 - (d / 800));
+    const farRef = state.radius * 1.4;
+    const scale = Math.max(0.6, Math.min(1.2, 1 - (d / farRef)));
+    const opacity = Math.max(0.55, 1 - (d / farRef));
 
     let el = markerPool.get(p.id);
     if (!el) {
