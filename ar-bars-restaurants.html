@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>AR Bars & Restaurants</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    height: 100%; width: 100%; overflow: hidden;
+    background: #000; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    user-select: none; -webkit-user-select: none;
+  }
+  #video {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; z-index: 1; background: #000;
+  }
+  #overlay {
+    position: fixed; inset: 0; z-index: 2; pointer-events: none;
+    overflow: hidden;
+  }
+  .marker {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+    transition: opacity 0.2s;
+    cursor: pointer;
+  }
+  .marker .pin {
+    background: rgba(20, 20, 25, 0.78);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 14px;
+    padding: 8px 12px;
+    min-width: 90px;
+    text-align: center;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+  }
+  .marker .icon { font-size: 20px; line-height: 1; margin-bottom: 2px; }
+  .marker .name {
+    font-size: 13px; font-weight: 600; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 160px;
+  }
+  .marker .dist {
+    font-size: 11px; opacity: 0.75; margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .marker .stem {
+    width: 2px; height: 14px; margin: 0 auto;
+    background: linear-gradient(to bottom, rgba(255,255,255,0.5), transparent);
+  }
+  .marker.bar .icon { filter: drop-shadow(0 0 6px rgba(255,180,80,0.6)); }
+  .marker.restaurant .icon { filter: drop-shadow(0 0 6px rgba(255,100,100,0.5)); }
+  .marker.cafe .icon { filter: drop-shadow(0 0 6px rgba(180,130,90,0.6)); }
+
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 5; padding: 14px 16px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.55), transparent);
+    pointer-events: none;
+  }
+  #hud-row {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .chip {
+    background: rgba(20,20,25,0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .chip.active { background: rgba(255,255,255,0.92); color: #000; border-color: transparent; }
+  .chip.info { pointer-events: none; }
+  #compass-bar {
+    position: fixed; top: 60px; left: 0; right: 0; height: 24px;
+    z-index: 4; pointer-events: none; overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+    mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+  }
+  #compass-bar .ticks {
+    position: absolute; top: 0; height: 100%;
+    display: flex; align-items: center;
+    font-size: 11px; font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    will-change: transform;
+  }
+  #compass-bar .tick {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    text-align: center; min-width: 30px;
+  }
+  #compass-bar .tick.major { color: #fff; }
+  #compass-bar .tick.minor { color: rgba(255,255,255,0.5); font-size: 9px; }
+  #compass-bar .center-mark {
+    position: absolute; left: 50%; top: 0; bottom: 0;
+    width: 2px; background: #4af; transform: translateX(-50%);
+    box-shadow: 0 0 8px #4af;
+  }
+
+  #start-screen {
+    position: fixed; inset: 0; z-index: 100;
+    background: linear-gradient(160deg, #1a1a2e 0%, #0f0f1a 100%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px; text-align: center;
+  }
+  #start-screen h1 {
+    font-size: 28px; margin-bottom: 8px; font-weight: 700;
+    background: linear-gradient(135deg, #ff6b6b, #ffa94d, #ffd93d);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  #start-screen p { font-size: 14px; opacity: 0.8; margin-bottom: 28px; max-width: 320px; line-height: 1.5; }
+  #start-btn {
+    background: linear-gradient(135deg, #ff6b6b, #ffa94d);
+    color: #fff; border: none; padding: 16px 32px;
+    font-size: 16px; font-weight: 600; border-radius: 999px;
+    cursor: pointer; box-shadow: 0 8px 24px rgba(255,107,107,0.35);
+  }
+  #start-btn:active { transform: scale(0.97); }
+  #start-screen .steps {
+    margin-top: 24px; font-size: 12px; opacity: 0.6; line-height: 1.8;
+  }
+
+  #status {
+    position: fixed; bottom: 24px; left: 16px; right: 16px;
+    z-index: 5; text-align: center; font-size: 12px; opacity: 0.7;
+    pointer-events: none;
+  }
+  #error-toast {
+    position: fixed; top: 50%; left: 16px; right: 16px;
+    transform: translateY(-50%);
+    background: rgba(180, 40, 40, 0.95);
+    padding: 16px; border-radius: 12px;
+    z-index: 50; font-size: 14px;
+    display: none;
+  }
+
+  #detail-sheet {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(15,15,20,0.92);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-top: 1px solid rgba(255,255,255,0.12);
+    border-radius: 24px 24px 0 0;
+    padding: 20px 20px 32px;
+    z-index: 20;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  #detail-sheet.open { transform: translateY(0); }
+  #detail-sheet .grab { width: 40px; height: 4px; background: rgba(255,255,255,0.3);
+    border-radius: 2px; margin: 0 auto 16px; }
+  #detail-sheet h2 { font-size: 20px; margin-bottom: 4px; }
+  #detail-sheet .meta { font-size: 13px; opacity: 0.7; margin-bottom: 16px; }
+  #detail-sheet .actions { display: flex; gap: 8px; }
+  #detail-sheet .btn {
+    flex: 1; background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px; padding: 12px;
+    color: #fff; text-decoration: none; text-align: center;
+    font-size: 14px; font-weight: 500;
+  }
+  #detail-sheet .btn.primary {
+    background: linear-gradient(135deg, #ff6b6b, #ffa94d); border: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="start-screen">
+  <h1>AR Bars & Restaurants</h1>
+  <p>Halte dein Telefon hoch und sieh Bars, Restaurants und Cafés in Echtzeit über dem Kamerabild.</p>
+  <button id="start-btn">Starten</button>
+  <div class="steps">
+    1. Kamera-Zugriff erlauben<br>
+    2. Standort erlauben<br>
+    3. Bewegungssensoren erlauben (iOS)
+  </div>
+</div>
+
+<video id="video" autoplay playsinline muted></video>
+<div id="overlay"></div>
+
+<div id="hud">
+  <div id="hud-row">
+    <div class="chip active" data-filter="all">Alle</div>
+    <div class="chip" data-filter="bar">🍸 Bars</div>
+    <div class="chip" data-filter="restaurant">🍽 Restaurants</div>
+    <div class="chip" data-filter="cafe">☕ Cafés</div>
+    <div class="chip info" id="count-chip">0</div>
+  </div>
+</div>
+<div id="compass-bar">
+  <div class="ticks" id="ticks"></div>
+  <div class="center-mark"></div>
+</div>
+
+<div id="status">Initialisiere…</div>
+<div id="error-toast"></div>
+
+<div id="detail-sheet">
+  <div class="grab"></div>
+  <h2 id="d-name">—</h2>
+  <div class="meta" id="d-meta">—</div>
+  <div class="actions">
+    <a class="btn" id="d-close" href="#" onclick="closeSheet();return false;">Schließen</a>
+    <a class="btn primary" id="d-maps" href="#" target="_blank">In Karten öffnen</a>
+  </div>
+</div>
+
+<script>
+// ============ State ============
+const state = {
+  lat: null, lon: null,
+  heading: 0,           // device facing direction (0 = N, 90 = E)
+  pitch: 0,
+  pois: [],
+  filter: 'all',
+  fovH: 65,             // approx horizontal FOV in degrees
+  lastFetchKey: null,
+};
+
+const $ = sel => document.querySelector(sel);
+const overlay = $('#overlay');
+const video = $('#video');
+const status = $('#status');
+
+function showError(msg) {
+  const t = $('#error-toast');
+  t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 5000);
+}
+function setStatus(msg) { status.textContent = msg; }
+
+// ============ Start ============
+$('#start-btn').addEventListener('click', async () => {
+  $('#start-screen').style.display = 'none';
+  try {
+    await initCamera();
+    await initOrientation();
+    initGeolocation();
+  } catch (e) {
+    showError(e.message || 'Fehler beim Starten');
+    console.error(e);
+  }
+});
+
+// ============ Camera ============
+async function initCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    audio: false
+  });
+  video.srcObject = stream;
+  await video.play();
+  // Try to estimate FOV from camera capabilities (best effort)
+  const track = stream.getVideoTracks()[0];
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  if (caps && caps.focalLength) {
+    // No reliable conversion; keep default
+  }
+}
+
+// ============ Orientation ============
+async function initOrientation() {
+  // iOS 13+ permission
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const res = await DeviceOrientationEvent.requestPermission();
+      if (res !== 'granted') throw new Error('Bewegungssensor nicht erlaubt');
+    } catch (e) { showError('Sensor-Erlaubnis abgelehnt'); }
+  }
+
+  // Prefer absolute orientation when available
+  const handler = (e) => {
+    let h = null;
+    // iOS: webkitCompassHeading is true heading (0=N, clockwise)
+    if (typeof e.webkitCompassHeading === 'number') {
+      h = e.webkitCompassHeading;
+    } else if (e.absolute && typeof e.alpha === 'number') {
+      // Android: alpha is 0=N when absolute, but rotates counterclockwise
+      h = (360 - e.alpha) % 360;
+    } else if (typeof e.alpha === 'number') {
+      h = (360 - e.alpha) % 360;
+    }
+    if (h !== null && !isNaN(h)) {
+      // Adjust for screen orientation
+      const screenAngle = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+      h = (h + screenAngle) % 360;
+      state.heading = h;
+    }
+    if (typeof e.beta === 'number') state.pitch = e.beta;
+  };
+  window.addEventListener('deviceorientationabsolute', handler, true);
+  window.addEventListener('deviceorientation', handler, true);
+}
+
+// ============ Geolocation ============
+function initGeolocation() {
+  if (!navigator.geolocation) { showError('Standort nicht verfügbar'); return; }
+  setStatus('Suche Standort…');
+  navigator.geolocation.watchPosition(
+    pos => {
+      state.lat = pos.coords.latitude;
+      state.lon = pos.coords.longitude;
+      maybeFetchPOIs();
+    },
+    err => showError('Standort: ' + err.message),
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+  );
+}
+
+// ============ POI fetch (Overpass / OpenStreetMap) ============
+async function maybeFetchPOIs() {
+  if (state.lat == null) return;
+  // Only refetch if moved > ~150m from last fetch
+  const key = `${state.lat.toFixed(3)},${state.lon.toFixed(3)}`;
+  if (key === state.lastFetchKey) return;
+  state.lastFetchKey = key;
+  setStatus('Lade Locations…');
+
+  const radius = 600; // meters
+  const q = `
+    [out:json][timeout:15];
+    (
+      node["amenity"~"^(bar|pub|restaurant|cafe|fast_food|biergarten|nightclub|food_court)$"](around:${radius},${state.lat},${state.lon});
+    );
+    out body;
+  `;
+  try {
+    const res = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(q),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+    const data = await res.json();
+    state.pois = (data.elements || [])
+      .filter(e => e.tags && e.tags.name)
+      .map(e => ({
+        id: e.id,
+        name: e.tags.name,
+        lat: e.lat, lon: e.lon,
+        amenity: e.tags.amenity,
+        cuisine: e.tags.cuisine,
+        category: categorize(e.tags.amenity),
+      }));
+    setStatus(`${state.pois.length} Locations geladen`);
+  } catch (e) {
+    showError('Daten konnten nicht geladen werden');
+  }
+}
+
+function categorize(amenity) {
+  if (['bar','pub','nightclub','biergarten'].includes(amenity)) return 'bar';
+  if (['cafe'].includes(amenity)) return 'cafe';
+  return 'restaurant';
+}
+function iconFor(cat) {
+  return cat === 'bar' ? '🍸' : cat === 'cafe' ? '☕' : '🍽';
+}
+
+// ============ Geo math ============
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000, toRad = x => x * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function bearing(lat1, lon1, lat2, lon2) {
+  const toRad = x => x * Math.PI / 180, toDeg = x => x * 180 / Math.PI;
+  const φ1 = toRad(lat1), φ2 = toRad(lat2);
+  const Δλ = toRad(lon2 - lon1);
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+function angularDiff(a, b) {
+  let d = ((a - b + 540) % 360) - 180;
+  return d;
+}
+
+// ============ Filters ============
+document.querySelectorAll('.chip[data-filter]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip[data-filter]').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    state.filter = chip.dataset.filter;
+  });
+});
+
+// ============ Render loop ============
+function buildCompass() {
+  const ticks = $('#ticks');
+  ticks.innerHTML = '';
+  ticks.style.width = '3600px';
+  for (let deg = 0; deg < 360; deg += 15) {
+    const el = document.createElement('div');
+    const isCardinal = deg % 90 === 0;
+    const label = deg === 0 ? 'N' : deg === 90 ? 'O' : deg === 180 ? 'S' : deg === 270 ? 'W' : deg + '°';
+    el.className = 'tick ' + (isCardinal ? 'major' : 'minor');
+    el.textContent = label;
+    el.style.left = (deg * 10) + 'px';
+    ticks.appendChild(el);
+  }
+}
+buildCompass();
+
+const markerPool = new Map(); // id -> element
+
+function render() {
+  // Compass
+  const W = window.innerWidth;
+  const ticks = $('#ticks');
+  const offset = (state.heading * 10) - W/2;
+  ticks.style.transform = `translateX(${-offset}px)`;
+
+  if (state.lat == null) { requestAnimationFrame(render); return; }
+
+  const visibleIds = new Set();
+  let visibleCount = 0;
+  const halfFov = state.fovH / 2;
+
+  // Sort by distance for stable z-order
+  const enriched = state.pois
+    .filter(p => state.filter === 'all' || p.category === state.filter)
+    .map(p => {
+      const d = haversine(state.lat, state.lon, p.lat, p.lon);
+      const b = bearing(state.lat, state.lon, p.lat, p.lon);
+      const off = angularDiff(b, state.heading); // degrees off-center; +right
+      return { p, d, b, off };
+    })
+    .sort((a, b) => b.d - a.d); // far first so near render on top
+
+  enriched.forEach(({ p, d, off }) => {
+    if (Math.abs(off) > halfFov) {
+      const el = markerPool.get(p.id);
+      if (el) el.style.display = 'none';
+      return;
+    }
+    visibleCount++;
+    visibleIds.add(p.id);
+
+    const xPct = 0.5 + (off / state.fovH);
+    const x = xPct * window.innerWidth;
+    // Vertical: closer = lower on screen, farther = higher (but keep near center)
+    const distFactor = Math.min(1, d / 600); // 0 close -> 1 far
+    const y = window.innerHeight * (0.45 + distFactor * 0.15);
+
+    // Scale: closer markers bigger
+    const scale = Math.max(0.6, Math.min(1.2, 1 - (d / 800)));
+    const opacity = Math.max(0.55, 1 - (d / 800));
+
+    let el = markerPool.get(p.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'marker ' + p.category;
+      el.innerHTML = `
+        <div class="pin">
+          <div class="icon">${iconFor(p.category)}</div>
+          <div class="name"></div>
+          <div class="dist"></div>
+        </div>
+        <div class="stem"></div>
+      `;
+      el.querySelector('.name').textContent = p.name;
+      el.addEventListener('click', () => openSheet(p, d));
+      overlay.appendChild(el);
+      markerPool.set(p.id, el);
+    }
+    el.style.display = 'block';
+    el.querySelector('.dist').textContent = d < 1000 ? `${Math.round(d)} m` : `${(d/1000).toFixed(1)} km`;
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.style.transform = `translate(-50%, -50%) scale(${scale})`;
+    el.style.opacity = opacity;
+    el.style.zIndex = Math.round(1000 - d);
+  });
+
+  // Hide pooled markers no longer visible
+  markerPool.forEach((el, id) => {
+    if (!visibleIds.has(id)) el.style.display = 'none';
+  });
+
+  $('#count-chip').textContent = `${visibleCount} sichtbar`;
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+// ============ Detail sheet ============
+function openSheet(p, d) {
+  $('#d-name').textContent = p.name;
+  const parts = [];
+  parts.push(p.category === 'bar' ? 'Bar' : p.category === 'cafe' ? 'Café' : 'Restaurant');
+  if (p.cuisine) parts.push(p.cuisine.replace(/_/g, ' '));
+  parts.push(d < 1000 ? `${Math.round(d)} m entfernt` : `${(d/1000).toFixed(1)} km entfernt`);
+  $('#d-meta').textContent = parts.join(' · ');
+  $('#d-maps').href = `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}`;
+  $('#detail-sheet').classList.add('open');
+}
+function closeSheet() { $('#detail-sheet').classList.remove('open'); }
+
+// Refresh on screen orientation change
+window.addEventListener('orientationchange', () => setTimeout(buildCompass, 100));
+</script>
+</body>
+</html>
