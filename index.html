@@ -553,7 +553,8 @@ function render() {
   let visibleCount = 0;
   const halfFov = state.fovH / 2;
 
-  // Sort by distance for stable z-order
+  // Take the 20 nearest within the active filter, then sort far-first for z-order
+  const MAX_VISIBLE = 20;
   const enriched = state.pois
     .filter(p => state.filter === 'all' || p.category === state.filter)
     .map(p => {
@@ -562,6 +563,8 @@ function render() {
       const off = angularDiff(b, state.heading); // degrees off-center; +right
       return { p, d, b, off };
     })
+    .sort((a, b) => a.d - b.d)
+    .slice(0, MAX_VISIBLE)
     .sort((a, b) => b.d - a.d); // far first so near render on top
 
   enriched.forEach(({ p, d, off }) => {
