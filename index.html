@@ -134,79 +134,61 @@
     pointer-events: none;
   }
 
-  #range-panel {
-    position: fixed;
-    right: 14px;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 110;
-    display: flex;
-    flex-direction: column;
+  .chip.range {
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    padding: 14px 12px;
-    background: rgba(20,20,25,0.85);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,180,80,0.45);
-    border-radius: 18px;
-    pointer-events: auto;
-    box-shadow: 0 8px 28px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,107,107,0.15);
+    gap: 8px;
+    padding: 6px 14px 6px 12px;
+    cursor: default;
   }
-  #range-panel .label {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    opacity: 0.7;
+  .chip.range .range-label {
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.85;
   }
-  #range-panel .value {
-    font-size: 13px;
+  .chip.range .range-value {
+    font-size: 12px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-    min-width: 48px;
-    text-align: center;
+    min-width: 44px;
+    text-align: right;
   }
   #range-track {
     position: relative;
-    width: 28px;
-    height: 200px;
+    width: 110px;
+    height: 22px;
     display: flex;
     align-items: center;
-    justify-content: center;
+    cursor: pointer;
+    touch-action: none;
   }
   #range-track .rail {
     position: absolute;
-    left: 50%;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    transform: translateX(-50%);
-    background: rgba(255,255,255,0.18);
+    left: 0; right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 4px;
+    background: rgba(255,255,255,0.22);
     border-radius: 2px;
     overflow: hidden;
   }
   #range-track .fill {
     position: absolute;
-    left: 0; right: 0; bottom: 0;
-    background: linear-gradient(to top, #ff6b6b, #ffa94d);
+    left: 0; top: 0; bottom: 0;
+    background: linear-gradient(to right, #ff6b6b, #ffa94d);
     border-radius: 2px;
   }
   #range-track .thumb {
     position: absolute;
-    left: 50%;
-    width: 22px;
-    height: 22px;
+    top: 50%;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: linear-gradient(135deg, #ff6b6b, #ffa94d);
     border: 2px solid #fff;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-    transform: translate(-50%, 50%);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.55);
+    transform: translate(-50%, -50%);
     pointer-events: none;
-  }
-  #range-track {
-    touch-action: none;
-    cursor: pointer;
   }
   #error-toast {
     position: fixed; top: 50%; left: 16px; right: 16px;
@@ -270,20 +252,19 @@
     <div class="chip" data-filter="restaurant">🍽 Restaurants</div>
     <div class="chip" data-filter="cafe">☕ Cafés</div>
     <div class="chip info" id="count-chip">0</div>
+    <div class="chip range">
+      <span class="range-label">Radius</span>
+      <div id="range-track">
+        <div class="rail"><div class="fill" id="range-fill"></div></div>
+        <div class="thumb" id="range-thumb"></div>
+      </div>
+      <span class="range-value" id="range-value">20 km</span>
+    </div>
   </div>
 </div>
 <div id="compass-bar">
   <div class="ticks" id="ticks"></div>
   <div class="center-mark"></div>
-</div>
-
-<div id="range-panel">
-  <div class="label">Radius</div>
-  <div class="value" id="range-value">600 m</div>
-  <div id="range-track">
-    <div class="rail"><div class="fill" id="range-fill"></div></div>
-    <div class="thumb" id="range-thumb"></div>
-  </div>
 </div>
 
 <div id="status">Initialisiere…</div>
@@ -308,7 +289,7 @@ const state = {
   pois: [],
   filter: 'all',
   fovH: 65,             // approx horizontal FOV in degrees
-  radius: 600,          // search radius in meters
+  radius: 20000,        // search radius in meters
   lastFetchKey: null,
 };
 
@@ -486,7 +467,7 @@ document.querySelectorAll('.chip[data-filter]').forEach(chip => {
   const fill = $('#range-fill');
   const thumb = $('#range-thumb');
   const valueEl = $('#range-value');
-  const MIN = 100, MAX = 3000, STEP = 50;
+  const MIN = 200, MAX = 50000, STEP = 100;
   const formatRadius = m => m >= 1000 ? `${(m/1000).toFixed(m % 1000 === 0 ? 0 : 1)} km` : `${m} m`;
   let debounceTimer = null;
 
@@ -495,8 +476,8 @@ document.querySelectorAll('.chip[data-filter]').forEach(chip => {
     v = Math.max(MIN, Math.min(MAX, v));
     state.radius = v;
     const pct = (v - MIN) / (MAX - MIN);
-    fill.style.height = (pct * 100) + '%';
-    thumb.style.bottom = (pct * 100) + '%';
+    fill.style.width = (pct * 100) + '%';
+    thumb.style.left = (pct * 100) + '%';
     valueEl.textContent = formatRadius(v);
   };
 
@@ -507,8 +488,8 @@ document.querySelectorAll('.chip[data-filter]').forEach(chip => {
 
   const valueFromEvent = e => {
     const rect = track.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const pct = 1 - Math.max(0, Math.min(1, y / rect.height));
+    const x = e.clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
     return MIN + pct * (MAX - MIN);
   };
 
