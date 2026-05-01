@@ -286,6 +286,8 @@ const state = {
   lat: null, lon: null,
   heading: 0,           // device facing direction (0 = N, 90 = E)
   pitch: 0,
+  smoothHeading: null,  // low-pass-filtered heading used for rendering
+  smoothPitch: 0,
   pois: [],
   filter: 'all',
   fovH: 65,             // approx horizontal FOV in degrees
@@ -345,8 +347,12 @@ async function initOrientation() {
     } catch (e) { showError('Sensor-Erlaubnis abgelehnt'); }
   }
 
-  // Prefer absolute orientation when available
-  const handler = (e) => {
+  // Prefer absolute orientation when available; ignore the relative event once
+  // we've seen an absolute one so the two sources don't race.
+  let haveAbsolute = false;
+  const handler = (e, isAbsolute) => {
+    if (haveAbsolute && !isAbsolute) return;
+    if (isAbsolute) haveAbsolute = true;
     let h = null;
     // iOS: webkitCompassHeading is true heading (0=N, clockwise)
     if (typeof e.webkitCompassHeading === 'number') {
@@ -365,8 +371,8 @@ async function initOrientation() {
     }
     if (typeof e.beta === 'number') state.pitch = e.beta;
   };
-  window.addEventListener('deviceorientationabsolute', handler, true);
-  window.addEventListener('deviceorientation', handler, true);
+  window.addEventListener('deviceorientationabsolute', e => handler(e, true), true);
+  window.addEventListener('deviceorientation', e => handler(e, false), true);
 }
 
 // ============ Geolocation ============
@@ -450,6 +456,10 @@ function bearing(lat1, lon1, lat2, lon2) {
 function angularDiff(a, b) {
   let d = ((a - b + 540) % 360) - 180;
   return d;
+}
+function lerpAngle(a, b, t) {
+  const diff = ((b - a + 540) % 360) - 180;
+  return (a + diff * t + 360) % 360;
 }
 
 // ============ Filters ============
@@ -541,10 +551,16 @@ buildCompass();
 const markerPool = new Map(); // id -> element
 
 function render() {
+  // Smooth heading and pitch to remove compass jitter
+  if (state.smoothHeading == null) state.smoothHeading = state.heading;
+  state.smoothHeading = lerpAngle(state.smoothHeading, state.heading, 0.12);
+  state.smoothPitch += (state.pitch - state.smoothPitch) * 0.12;
+  const heading = state.smoothHeading;
+
   // Compass
   const W = window.innerWidth;
   const ticks = $('#ticks');
-  const offset = (state.heading * 10) - W/2;
+  const offset = (heading * 10) - W/2;
   ticks.style.transform = `translateX(${-offset}px)`;
 
   if (state.lat == null) { requestAnimationFrame(render); return; }
@@ -560,7 +576,7 @@ function render() {
     .map(p => {
       const d = haversine(state.lat, state.lon, p.lat, p.lon);
       const b = bearing(state.lat, state.lon, p.lat, p.lon);
-      const off = angularDiff(b, state.heading); // degrees off-center; +right
+      const off = angularDiff(b, heading); // degrees off-center; +right
       return { p, d, b, off };
     })
     .sort((a, b) => a.d - b.d)
